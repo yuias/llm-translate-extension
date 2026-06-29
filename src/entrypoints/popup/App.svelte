@@ -1,25 +1,18 @@
 <script lang="ts">
   import { browser } from 'wxt/browser';
   import { LANGUAGES } from '../../lib/languages';
-  import { getSettings, settingsStorage } from '../../lib/storage';
+  import { settings } from '../../lib/settings.svelte';
   import type { Settings } from '../../lib/types';
 
-  let settings = $state<Settings | null>(null);
-
-  $effect(() => {
-    getSettings().then((s) => (settings = s));
-  });
-
   const activeProvider = $derived(
-    settings?.providers.find((p) => p.id === settings?.activeProviderId) ??
-      settings?.providers[0] ??
+    settings.value?.providers.find((p) => p.id === settings.value?.activeProviderId) ??
+      settings.value?.providers[0] ??
       null,
   );
 
   async function onLangChange(code: string) {
-    if (!settings) return;
-    settings.targetLang = code as Settings['targetLang'];
-    await settingsStorage.setValue($state.snapshot(settings));
+    if (!settings.value) return;
+    await settings.save({ ...$state.snapshot(settings.value), targetLang: code as Settings['targetLang'] });
   }
 
   function openOptions() {
@@ -33,10 +26,10 @@
     <button class="icon" title="Settings" onclick={openOptions} aria-label="Settings">⚙</button>
   </header>
 
-  {#if settings}
+  {#if settings.value}
     <label class="field">
       <span>Translate into</span>
-      <select value={settings.targetLang} onchange={(e) => onLangChange(e.currentTarget.value)}>
+      <select value={settings.value.targetLang} onchange={(e) => onLangChange(e.currentTarget.value)}>
         {#each LANGUAGES as lang}
           <option value={lang.code}>{lang.label} · {lang.native}</option>
         {/each}
