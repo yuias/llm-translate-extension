@@ -51,11 +51,11 @@
   <div class="grid">
     <label>
       <span>Display name</span>
-      <input bind:value={draft.displayName} placeholder="My GPT-4o" />
+      <input bind:value={draft.displayName} placeholder="gpt-5.4-mini" />
     </label>
     <label>
       <span>Model</span>
-      <input bind:value={draft.model} placeholder="gpt-4o-mini" />
+      <input bind:value={draft.model} placeholder="gpt-5.4-mini" />
     </label>
     <label class="full">
       <span>Endpoint (chat completions URL)</span>
