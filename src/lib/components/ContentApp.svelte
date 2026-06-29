@@ -99,6 +99,30 @@
     if (result) await navigator.clipboard.writeText(result).catch(() => {});
   }
 
+  // Persist manual corner-drag resizes back to settings (debounced).
+  function persistSize(el: HTMLElement) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ro = new ResizeObserver(() => {
+      const width = Math.round(el.offsetWidth);
+      const height = Math.round(el.offsetHeight);
+      const cur = settings.value?.popupSize;
+      if (!cur || (Math.abs(cur.width - width) < 2 && Math.abs(cur.height - height) < 2)) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (settings.value) {
+          settings.save({ ...$state.snapshot(settings.value), popupSize: { width, height } });
+        }
+      }, 300);
+    });
+    ro.observe(el);
+    return {
+      destroy() {
+        ro.disconnect();
+        clearTimeout(timer);
+      },
+    };
+  }
+
   onMount(() => {
     document.addEventListener('mouseup', onMouseUp);
     document.addEventListener('selectionchange', onSelectionChange);
@@ -131,6 +155,7 @@
   {#if popup}
     <div
       class="popup"
+      use:persistSize
       style="left:{popup.x}px; top:{popup.y}px; width:{size.width}px; height:{size.height}px"
     >
       <header>
@@ -186,6 +211,7 @@
     background: #5a78f0;
   }
   .popup {
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     background: #181b22;

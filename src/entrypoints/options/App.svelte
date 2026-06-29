@@ -62,6 +62,35 @@
     </section>
 
     <section>
+      <h2>Translation popup</h2>
+      <div class="popup-size">
+        <label class="row">
+          <span>Width: {s.popupSize.width}px</span>
+          <input
+            type="range"
+            min="240"
+            max="800"
+            step="10"
+            value={s.popupSize.width}
+            oninput={(e) => update((d) => (d.popupSize.width = e.currentTarget.valueAsNumber))}
+          />
+        </label>
+        <label class="row">
+          <span>Height: {s.popupSize.height}px</span>
+          <input
+            type="range"
+            min="160"
+            max="700"
+            step="10"
+            value={s.popupSize.height}
+            oninput={(e) => update((d) => (d.popupSize.height = e.currentTarget.valueAsNumber))}
+          />
+        </label>
+        <p class="muted hint">You can also drag the popup's corner to resize it; the new size is saved.</p>
+      </div>
+    </section>
+
+    <section>
       <div class="section-head">
         <h2>Providers</h2>
         {#if !editing}
@@ -183,6 +212,19 @@
   }
   .muted {
     color: var(--text-muted);
+  }
+  .popup-size {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .popup-size input[type='range'] {
+    width: 320px;
+    accent-color: var(--accent);
+  }
+  .hint {
+    font-size: 12px;
+    margin: 4px 0 0;
   }
   .empty {
     padding: 24px;
