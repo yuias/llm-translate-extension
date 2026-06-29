@@ -1,0 +1,32 @@
+/* Shared design tokens for a clean, modern look across popup + options. */
+:root {
+  --bg: #0f1115;
+  --surface: #181b22;
+  --surface-2: #20242d;
+  --border: #2c313c;
+  --text: #e6e8ec;
+  --text-muted: #9aa3b2;
+  --accent: #6d8bff;
+  --accent-hover: #5a78f0;
+  --danger: #ff6b6b;
+  --radius: 10px;
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}

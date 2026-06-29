@@ -143,5 +143,10 @@ vite.config.ts.timestamp-*
 .vite/
 
 
+# WXT
+.wxt/
+.output/
+stats.html
+
 # Claude Code
 .claude/

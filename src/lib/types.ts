@@ -1,0 +1,25 @@
+import type { LangCode } from './languages';
+
+/** A single OpenAI-compatible LLM endpoint configured by the user. */
+export interface Provider {
+  id: string;
+  displayName: string;
+  /** Full chat-completions URL, e.g. https://api.openai.com/v1/chat/completions */
+  endpoint: string;
+  model: string;
+  apiKey: string;
+}
+
+export interface PopupSize {
+  width: number;
+  height: number;
+}
+
+export interface Settings {
+  providers: Provider[];
+  activeProviderId: string | null;
+  targetLang: LangCode;
+  popupSize: PopupSize;
+}
+
+export const DEFAULT_POPUP_SIZE: PopupSize = { width: 360, height: 280 };
