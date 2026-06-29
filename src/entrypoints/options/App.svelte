@@ -166,12 +166,17 @@
     font-size: 22px;
     margin: 0 0 4px;
   }
+  section {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
   h2 {
     font-size: 14px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-muted);
-    margin: 0 0 14px;
+    margin: 0;
   }
   .section-head {
     display: flex;
