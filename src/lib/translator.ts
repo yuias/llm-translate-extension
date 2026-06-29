@@ -130,55 +130,94 @@ function batchSystemPrompt(target: LangCode): string {
   ].join(' ');
 }
 
-/** Extract a JSON array from a model response, tolerating ```json fences. */
-function parseJsonArray(content: string): unknown {
-  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const raw = (fenced?.[1] ?? content).trim();
-  const start = raw.indexOf('[');
-  const end = raw.lastIndexOf(']');
-  if (start === -1 || end === -1 || end < start) {
-    throw new TranslationError('Model did not return a JSON array');
+/**
+ * Yield content deltas from an OpenAI-compatible streaming (SSE) response.
+ * Shared by the single-text and batch streaming paths.
+ */
+async function* streamDeltas(res: Response): AsyncGenerator<string, void, void> {
+  if (!res.body) throw new TranslationError('Streaming not supported by endpoint');
+
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+
+    // SSE frames are newline-delimited; each "data:" line holds a JSON chunk.
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (payload === '[DONE]') return;
+      try {
+        const delta = JSON.parse(payload)?.choices?.[0]?.delta?.content;
+        if (typeof delta === 'string' && delta) yield delta;
+      } catch {
+        // Ignore keep-alive comments and malformed partial frames.
+      }
+    }
   }
-  return JSON.parse(raw.slice(start, end + 1));
 }
 
 /**
- * Translate many short segments in a single request. Returns an array aligned
- * 1:1 with the input, so callers can map results back to their DOM nodes.
+ * Incremental parser for a streamed JSON array of strings. Fed raw content
+ * deltas, it emits each element the instant its closing quote arrives — so
+ * callers can render translations as they complete instead of waiting for the
+ * whole array. Assumes a flat array of strings (the batch response shape).
  */
-export async function translateSegments(
-  provider: Provider,
-  segments: string[],
-  target: LangCode,
-  signal?: AbortSignal,
-): Promise<string[]> {
-  if (segments.length === 0) return [];
-  const res = await postChat(
-    provider,
-    [
-      { role: 'system', content: batchSystemPrompt(target) },
-      { role: 'user', content: JSON.stringify(segments) },
-    ],
-    signal,
-    false,
-  );
-  const data = await res.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content !== 'string') {
-    throw new TranslationError('Unexpected response shape from LLM');
+class JsonArrayStream {
+  private started = false; // seen the opening '['
+  private done = false; // seen the closing ']'
+  private inString = false;
+  private escaped = false; // previous char was a backslash inside a string
+  private raw = ''; // chars of the current element, still JSON-escaped
+
+  /** Feed a delta; return any elements that completed within it. */
+  push(chunk: string): string[] {
+    const out: string[] = [];
+    for (const ch of chunk) {
+      if (this.done) break;
+      if (this.inString) {
+        if (this.escaped) {
+          // Keep the escape sequence intact so JSON.parse can decode it.
+          this.raw += '\\' + ch;
+          this.escaped = false;
+        } else if (ch === '\\') {
+          this.escaped = true;
+        } else if (ch === '"') {
+          this.inString = false;
+          out.push(this.flush());
+        } else {
+          this.raw += ch;
+        }
+      } else if (ch === '"' && this.started) {
+        this.inString = true;
+      } else if (ch === '[') {
+        this.started = true;
+      } else if (ch === ']') {
+        this.done = true;
+      }
+    }
+    return out;
   }
-  const parsed = parseJsonArray(content);
-  if (!Array.isArray(parsed) || parsed.length !== segments.length) {
-    throw new TranslationError(
-      `Batch size mismatch: expected ${segments.length}, got ${Array.isArray(parsed) ? parsed.length : 'non-array'}`,
-    );
+
+  /** Decode the collected element, tolerating odd escaping over dropping it. */
+  private flush(): string {
+    const raw = this.raw;
+    this.raw = '';
+    try {
+      return JSON.parse(`"${raw}"`);
+    } catch {
+      return raw;
+    }
   }
-  return parsed.map((v) => String(v));
 }
 
 /**
  * Translate a single chunk, yielding partial text as it streams in.
- * Parses Server-Sent Events from an OpenAI-compatible streaming response.
  */
 export async function* translateTextStream(
   provider: Provider,
@@ -195,29 +234,35 @@ export async function* translateTextStream(
     signal,
     true,
   );
-  if (!res.body) throw new TranslationError('Streaming not supported by endpoint');
+  yield* streamDeltas(res);
+}
 
-  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buffer = '';
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += value;
-
-    // SSE frames are separated by double newlines; each "data:" line holds JSON.
-    let nl: number;
-    while ((nl = buffer.indexOf('\n')) !== -1) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (payload === '[DONE]') return;
-      try {
-        const delta = JSON.parse(payload)?.choices?.[0]?.delta?.content;
-        if (typeof delta === 'string' && delta) yield delta;
-      } catch {
-        // Ignore keep-alive comments and malformed partial frames.
-      }
+/**
+ * Translate many short segments in one streaming request, yielding each result
+ * as soon as the model finishes it. Emitted indexes are 0-based and ordered, so
+ * callers map them straight back to the input array (and their DOM nodes).
+ */
+export async function* translateSegmentsStream(
+  provider: Provider,
+  segments: string[],
+  target: LangCode,
+  signal?: AbortSignal,
+): AsyncGenerator<{ index: number; text: string }, void, void> {
+  if (segments.length === 0) return;
+  const res = await postChat(
+    provider,
+    [
+      { role: 'system', content: batchSystemPrompt(target) },
+      { role: 'user', content: JSON.stringify(segments) },
+    ],
+    signal,
+    true,
+  );
+  const parser = new JsonArrayStream();
+  let index = 0;
+  for await (const delta of streamDeltas(res)) {
+    for (const text of parser.push(delta)) {
+      yield { index: index++, text };
     }
   }
 }

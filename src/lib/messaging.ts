@@ -3,26 +3,17 @@ import type { LangCode } from './languages';
 /** Long-lived port used to stream a translation from background to content. */
 export const TRANSLATE_PORT = 'llm-translate:stream';
 
-export interface TranslateRequest {
-  text: string;
-  targetLang: LangCode;
-}
+/** Request opening a stream: either a single selection or a batch of segments. */
+export type StreamRequest =
+  | { kind: 'text'; text: string; targetLang: LangCode }
+  | { kind: 'batch'; segments: string[]; targetLang: LangCode };
 
 export type StreamMessage =
+  // 'text' mode: token deltas to append; 'batch' mode: a completed segment.
   | { type: 'chunk'; delta: string }
+  | { type: 'segment'; index: number; text: string }
   | { type: 'done' }
   | { type: 'error'; message: string };
-
-/** Background request to translate a batch of segments in one shot (no stream). */
-export interface BatchTranslateMessage {
-  type: 'translateBatch';
-  segments: string[];
-  targetLang: LangCode;
-}
-
-export type BatchTranslateResponse =
-  | { ok: true; result: string[] }
-  | { ok: false; error: string };
 
 /** Commands sent from the popup to the active tab's content script. */
 export type PageCommand =

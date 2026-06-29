@@ -4,7 +4,6 @@
   import { DEFAULT_LANG, languageLabel } from '../languages';
   import {
     TRANSLATE_PORT,
-    type BatchTranslateResponse,
     type PageCommand,
     type PageState,
     type StreamMessage,
@@ -31,6 +30,9 @@
   let pageError = $state('');
   let cancelled = false;
   const originals = new Map<Text, string>();
+  // Open streaming ports — one per in-flight batch — tracked so we can tear
+  // them all down on cancel/unmount.
+  const pagePorts = new Set<ReturnType<typeof browser.runtime.connect>>();
 
   const size = $derived(settings.value?.popupSize ?? DEFAULT_POPUP_SIZE);
   const targetLang = $derived(settings.value?.targetLang ?? DEFAULT_LANG);
@@ -100,7 +102,7 @@
         errorMsg = msg.message;
       }
     });
-    port.postMessage({ text, targetLang });
+    port.postMessage({ kind: 'text', text, targetLang });
   }
 
   function closePopup() {
@@ -150,35 +152,63 @@
     pageState = 'translating';
 
     const batches = batchNodes(nodes);
-    let failed = 0;
 
-    await runPool(batches, 3, async (batch) => {
-      if (cancelled) return;
-      const segments = batch.map((n) => n.nodeValue ?? '');
-      const res: BatchTranslateResponse = await browser.runtime.sendMessage({
-        type: 'translateBatch',
-        segments,
-        targetLang,
-      });
-      if (cancelled) return;
-      if (res.ok) {
-        batch.forEach((node, i) => {
-          if (!originals.has(node)) originals.set(node, node.nodeValue ?? '');
-          node.nodeValue = res.result[i] ?? node.nodeValue;
-        });
-      } else {
-        failed += batch.length;
-        pageError = res.error;
-      }
-      progress = { ...progress, done: progress.done + batch.length };
-    });
+    await runPool(batches, 3, (batch) => streamBatch(batch));
 
     if (cancelled) {
       restorePage();
       return;
     }
     pageState = originals.size > 0 ? 'translated' : 'original';
+    const failed = progress.total - progress.done;
     if (failed > 0 && !pageError) pageError = `${failed} segment(s) could not be translated.`;
+  }
+
+  /**
+   * Stream one batch over its own port, applying each segment to its DOM node
+   * the moment it arrives. Resolves when the batch finishes, errors, or cancels.
+   */
+  function streamBatch(batch: Text[]): Promise<void> {
+    return new Promise((resolve) => {
+      if (cancelled) return resolve();
+      const segments = batch.map((n) => n.nodeValue ?? '');
+      const p = browser.runtime.connect({ name: TRANSLATE_PORT });
+      pagePorts.add(p);
+      const applied: Text[] = []; // nodes this batch mutated, for rollback on error
+      const finish = () => {
+        pagePorts.delete(p);
+        p.disconnect();
+        resolve();
+      };
+      p.onMessage.addListener((msg: StreamMessage) => {
+        if (cancelled) return finish();
+        if (msg.type === 'segment') {
+          const node = batch[msg.index];
+          if (node) {
+            if (!originals.has(node)) originals.set(node, node.nodeValue ?? '');
+            node.nodeValue = msg.text;
+            applied.push(node);
+            progress = { ...progress, done: progress.done + 1 };
+          }
+        } else if (msg.type === 'done') {
+          finish();
+        } else if (msg.type === 'error') {
+          pageError = msg.message;
+          // A failed batch is all-or-nothing: undo its partial in-place edits so
+          // the page never shows a half-translated batch.
+          for (const node of applied) {
+            const original = originals.get(node);
+            if (original !== undefined) {
+              node.nodeValue = original;
+              originals.delete(node);
+            }
+          }
+          progress = { ...progress, done: progress.done - applied.length };
+          finish();
+        }
+      });
+      p.postMessage({ kind: 'batch', segments, targetLang });
+    });
   }
 
   function restorePage() {
