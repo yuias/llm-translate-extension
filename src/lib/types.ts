@@ -15,11 +15,16 @@ export interface PopupSize {
   height: number;
 }
 
+/** Color scheme preference; 'system' follows the OS setting. */
+export type ThemeMode = 'system' | 'dark' | 'light';
+
 export interface Settings {
   providers: Provider[];
   activeProviderId: string | null;
   targetLang: LangCode;
   popupSize: PopupSize;
+  theme: ThemeMode;
 }
 
 export const DEFAULT_POPUP_SIZE: PopupSize = { width: 360, height: 280 };
+export const DEFAULT_THEME: ThemeMode = 'system';

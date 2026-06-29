@@ -1,4 +1,14 @@
+import { execSync } from 'node:child_process';
 import { defineConfig } from 'wxt';
+
+// Short commit hash baked in at build time for the options "about" line.
+const gitHash = (() => {
+  try {
+    return execSync('git rev-parse --short HEAD').toString().trim();
+  } catch {
+    return 'unknown';
+  }
+})();
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -9,6 +19,7 @@ export default defineConfig({
   // gives no real benefit for locally-bundled extension pages.
   vite: () => ({
     build: { modulePreload: false },
+    define: { __GIT_HASH__: JSON.stringify(gitHash) },
   }),
   manifest: {
     name: 'LLM Translate',

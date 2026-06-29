@@ -11,7 +11,7 @@
   } from '../messaging';
   import { batchNodes, collectTextNodes, runPool } from '../pageTranslate';
   import { settings } from '../settings.svelte';
-  import { DEFAULT_POPUP_SIZE } from '../types';
+  import { DEFAULT_POPUP_SIZE, DEFAULT_THEME } from '../types';
 
   type Point = { x: number; y: number };
   type Status = 'idle' | 'loading' | 'streaming' | 'done' | 'error';
@@ -34,6 +34,8 @@
 
   const size = $derived(settings.value?.popupSize ?? DEFAULT_POPUP_SIZE);
   const targetLang = $derived(settings.value?.targetLang ?? DEFAULT_LANG);
+  // Shadow DOM is isolated from the document root, so scope the theme here.
+  const theme = $derived(settings.value?.theme ?? DEFAULT_THEME);
 
   function currentSelection(): { text: string; rect: DOMRect } | null {
     const sel = window.getSelection();
@@ -220,7 +222,7 @@
   });
 </script>
 
-<div class="root">
+<div class="root" data-theme={theme}>
   {#if button}
     <button
       class="trigger"
@@ -280,7 +282,8 @@
     pointer-events: none;
     z-index: 2147483647;
     font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-    /* Scoped tokens so the overlay adapts to the OS color scheme. */
+    /* Dark is the base; the data-theme attribute (set from settings) and the
+       OS media query below switch to light, mirroring theme.css. */
     --c-surface: #181b22;
     --c-surface-2: #20242d;
     --c-text: #e6e8ec;
@@ -292,8 +295,20 @@
     --c-warn: #ffb86b;
     --c-spinner-track: #3a4150;
   }
+  .root[data-theme='light'] {
+    --c-surface: #ffffff;
+    --c-surface-2: #eef0f4;
+    --c-text: #1b1e24;
+    --c-muted: #69707d;
+    --c-border: #d7dbe2;
+    --c-accent: #4763d6;
+    --c-accent-hover: #3a53bd;
+    --c-danger: #d83a3a;
+    --c-warn: #c2740a;
+    --c-spinner-track: #d7dbe2;
+  }
   @media (prefers-color-scheme: light) {
-    .root {
+    .root:not([data-theme='dark']) {
       --c-surface: #ffffff;
       --c-surface-2: #eef0f4;
       --c-text: #1b1e24;

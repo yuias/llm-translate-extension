@@ -1,12 +1,13 @@
 import { storage } from '#imports';
 import { DEFAULT_LANG } from './languages';
-import { DEFAULT_POPUP_SIZE, type Provider, type Settings } from './types';
+import { DEFAULT_POPUP_SIZE, DEFAULT_THEME, type Provider, type Settings } from './types';
 
 const DEFAULT_SETTINGS: Settings = {
   providers: [],
   activeProviderId: null,
   targetLang: DEFAULT_LANG,
   popupSize: DEFAULT_POPUP_SIZE,
+  theme: DEFAULT_THEME,
 };
 
 // API keys live in local storage only, never synced to the cloud.

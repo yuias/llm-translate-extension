@@ -1,4 +1,6 @@
 /* Shared design tokens for a clean, modern look across popup + options. */
+/* Dark is the base; light tokens are factored into a placeholder applied by
+   both the explicit-light selector and the OS-following media query below. */
 :root {
   --bg: #0f1115;
   --surface: #181b22;
@@ -13,8 +15,22 @@
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* Forced light theme. */
+:root[data-theme='light'] {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --border: #d7dbe2;
+  --text: #1b1e24;
+  --text-muted: #69707d;
+  --accent: #4763d6;
+  --accent-hover: #3a53bd;
+  --danger: #d83a3a;
+}
+
+/* System / unset: follow the OS, but never when dark is explicitly forced. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme='dark']) {
     --bg: #f5f6f8;
     --surface: #ffffff;
     --surface-2: #eef0f4;

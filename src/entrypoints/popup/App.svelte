@@ -3,7 +3,11 @@
   import { LANGUAGES } from '../../lib/languages';
   import type { PageCommand, PageState } from '../../lib/messaging';
   import { settings } from '../../lib/settings.svelte';
-  import type { Settings } from '../../lib/types';
+  import { applyTheme } from '../../lib/theme';
+  import { DEFAULT_THEME, type Settings } from '../../lib/types';
+
+  // Keep the popup scheme in sync with the saved preference.
+  $effect(() => applyTheme(settings.value?.theme ?? DEFAULT_THEME));
 
   // 'unavailable' = no content script on this tab (e.g. chrome:// pages).
   let pageState = $state<PageState | 'unavailable'>('unavailable');

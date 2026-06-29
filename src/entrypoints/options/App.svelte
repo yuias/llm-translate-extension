@@ -1,11 +1,19 @@
 <script lang="ts">
+  import { browser } from 'wxt/browser';
   import ProviderForm from '../../lib/components/ProviderForm.svelte';
   import { LANGUAGES } from '../../lib/languages';
   import { settings } from '../../lib/settings.svelte';
-  import type { Provider, Settings } from '../../lib/types';
+  import { applyTheme } from '../../lib/theme';
+  import { DEFAULT_THEME, type Provider, type Settings } from '../../lib/types';
 
   // The provider currently being added/edited, or null when the list is shown.
   let editing = $state<Provider | null>(null);
+
+  const version = browser.runtime.getManifest().version;
+  const gitHash = __GIT_HASH__;
+
+  // Keep the document scheme in sync with the saved preference.
+  $effect(() => applyTheme(settings.value?.theme ?? DEFAULT_THEME));
 
   function newProvider(): Provider {
     return { id: crypto.randomUUID(), displayName: '', endpoint: '', model: '', apiKey: '' };
@@ -59,6 +67,17 @@
           {/each}
         </select>
       </label>
+      <label class="row">
+        <span>Theme</span>
+        <select
+          value={s.theme}
+          onchange={(e) => update((d) => (d.theme = e.currentTarget.value as Settings['theme']))}
+        >
+          <option value="system">System</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </label>
     </section>
 
     <section>
@@ -69,7 +88,7 @@
           <input
             type="range"
             min="240"
-            max="800"
+            max="1024"
             step="10"
             value={s.popupSize.width}
             oninput={(e) => update((d) => (d.popupSize.width = e.currentTarget.valueAsNumber))}
@@ -80,7 +99,7 @@
           <input
             type="range"
             min="160"
-            max="700"
+            max="1024"
             step="10"
             value={s.popupSize.height}
             oninput={(e) => update((d) => (d.popupSize.height = e.currentTarget.valueAsNumber))}
@@ -130,6 +149,8 @@
   {:else}
     <p class="muted">Loading…</p>
   {/if}
+
+  <footer class="version muted">v{version} ({gitHash})</footer>
 </main>
 
 <style>
@@ -212,6 +233,12 @@
   }
   .muted {
     color: var(--text-muted);
+  }
+  .version {
+    margin: 0;
+    text-align: right;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
   }
   .popup-size {
     display: flex;
