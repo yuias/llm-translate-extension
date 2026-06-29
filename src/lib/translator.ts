@@ -53,15 +53,25 @@ function retryDelayMs(res: Response, attempt: number): number {
   return Math.min(1000 * 2 ** attempt, 8000);
 }
 
+/**
+ * Accept either a full chat-completions URL or just the API base URL
+ * (e.g. https://api.openai.com/v1) and normalize to the former at request time.
+ */
+function resolveEndpoint(endpoint: string): string {
+  const trimmed = endpoint.trim().replace(/\/+$/, '');
+  return /\/chat\/completions$/.test(trimmed) ? trimmed : `${trimmed}/chat/completions`;
+}
+
 async function postChat(
   provider: Provider,
   messages: ChatMessage[],
   signal: AbortSignal | undefined,
   stream: boolean,
 ): Promise<Response> {
+  const url = resolveEndpoint(provider.endpoint);
   // Retry transient failures (rate limits, upstream 5xx) with backoff.
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(provider.endpoint, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
