@@ -2,7 +2,7 @@
   "name": "llm-translate-extension",
   "description": "Translate selected text or whole pages with an OpenAI-compatible LLM",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
