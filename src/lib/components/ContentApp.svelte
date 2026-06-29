@@ -280,6 +280,31 @@
     pointer-events: none;
     z-index: 2147483647;
     font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    /* Scoped tokens so the overlay adapts to the OS color scheme. */
+    --c-surface: #181b22;
+    --c-surface-2: #20242d;
+    --c-text: #e6e8ec;
+    --c-muted: #9aa3b2;
+    --c-border: #2c313c;
+    --c-accent: #6d8bff;
+    --c-accent-hover: #5a78f0;
+    --c-danger: #ff6b6b;
+    --c-warn: #ffb86b;
+    --c-spinner-track: #3a4150;
+  }
+  @media (prefers-color-scheme: light) {
+    .root {
+      --c-surface: #ffffff;
+      --c-surface-2: #eef0f4;
+      --c-text: #1b1e24;
+      --c-muted: #69707d;
+      --c-border: #d7dbe2;
+      --c-accent: #4763d6;
+      --c-accent-hover: #3a53bd;
+      --c-danger: #d83a3a;
+      --c-warn: #c2740a;
+      --c-spinner-track: #d7dbe2;
+    }
   }
   .trigger,
   .popup {
@@ -291,7 +316,7 @@
     height: 32px;
     border-radius: 50%;
     border: none;
-    background: #6d8bff;
+    background: var(--c-accent);
     color: white;
     font-size: 12px;
     font-weight: 700;
@@ -303,15 +328,15 @@
     justify-content: center;
   }
   .trigger:hover {
-    background: #5a78f0;
+    background: var(--c-accent-hover);
   }
   .popup {
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    background: #181b22;
-    color: #e6e8ec;
-    border: 1px solid #2c313c;
+    background: var(--c-surface);
+    color: var(--c-text);
+    border: 1px solid var(--c-border);
     border-radius: 10px;
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
     overflow: hidden;
@@ -325,12 +350,12 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 10px;
-    border-bottom: 1px solid #2c313c;
+    border-bottom: 1px solid var(--c-border);
     flex-shrink: 0;
   }
   .lang {
     font-size: 12px;
-    color: #9aa3b2;
+    color: var(--c-muted);
   }
   .head-actions {
     display: flex;
@@ -339,15 +364,15 @@
   .icon {
     background: none;
     border: none;
-    color: #9aa3b2;
+    color: var(--c-muted);
     cursor: pointer;
     font-size: 13px;
     padding: 2px 4px;
     border-radius: 4px;
   }
   .icon:hover {
-    color: #e6e8ec;
-    background: #20242d;
+    color: var(--c-text);
+    background: var(--c-surface-2);
   }
   .body {
     padding: 12px;
@@ -358,10 +383,10 @@
     word-break: break-word;
   }
   .muted {
-    color: #9aa3b2;
+    color: var(--c-muted);
   }
   .error {
-    color: #ff6b6b;
+    color: var(--c-danger);
   }
   .banner {
     position: fixed;
@@ -372,9 +397,9 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    background: #181b22;
-    color: #e6e8ec;
-    border: 1px solid #2c313c;
+    background: var(--c-surface);
+    color: var(--c-text);
+    border: 1px solid var(--c-border);
     border-radius: 999px;
     padding: 8px 8px 8px 16px;
     font-size: 13px;
@@ -388,18 +413,18 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    background: #181b22;
-    border: 1px solid #2c313c;
+    background: var(--c-surface);
+    border: 1px solid var(--c-border);
     border-radius: 999px;
     padding: 6px 8px 6px 12px;
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
   }
   .pill-warn {
-    color: #ffb86b;
+    color: var(--c-warn);
     cursor: help;
   }
   .banner-btn {
-    background: #6d8bff;
+    background: var(--c-accent);
     color: white;
     border: none;
     border-radius: 999px;
@@ -409,13 +434,13 @@
     cursor: pointer;
   }
   .banner-btn:hover {
-    background: #5a78f0;
+    background: var(--c-accent-hover);
   }
   .spinner {
     width: 14px;
     height: 14px;
-    border: 2px solid #3a4150;
-    border-top-color: #6d8bff;
+    border: 2px solid var(--c-spinner-track);
+    border-top-color: var(--c-accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -428,7 +453,7 @@
     display: inline-block;
     width: 7px;
     height: 1.05em;
-    background: #6d8bff;
+    background: var(--c-accent);
     margin-left: 1px;
     vertical-align: text-bottom;
     animation: blink 1s steps(2, start) infinite;
