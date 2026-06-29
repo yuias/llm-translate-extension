@@ -26,29 +26,64 @@ function systemPrompt(target: LangCode): string {
   ].join(' ');
 }
 
+const MAX_RETRIES = 3;
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'));
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true },
+    );
+  });
+}
+
+/** Backoff for a retryable response, honoring Retry-After when present. */
+function retryDelayMs(res: Response, attempt: number): number {
+  const retryAfter = res.headers.get('retry-after');
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds)) return seconds * 1000;
+  }
+  return Math.min(1000 * 2 ** attempt, 8000);
+}
+
 async function postChat(
   provider: Provider,
   messages: ChatMessage[],
   signal: AbortSignal | undefined,
   stream: boolean,
 ): Promise<Response> {
-  const res = await fetch(provider.endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${provider.apiKey}`,
-    },
-    body: JSON.stringify({ model: provider.model, messages, stream, temperature: 0.2 }),
-    signal,
-  });
-  if (!res.ok) {
+  // Retry transient failures (rate limits, upstream 5xx) with backoff.
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(provider.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${provider.apiKey}`,
+      },
+      body: JSON.stringify({ model: provider.model, messages, stream, temperature: 0.2 }),
+      signal,
+    });
+    if (res.ok) return res;
+
+    const retryable = res.status === 429 || res.status >= 500;
+    if (retryable && attempt < MAX_RETRIES) {
+      await sleep(retryDelayMs(res, attempt), signal);
+      continue;
+    }
+
     const body = await res.text().catch(() => '');
     throw new TranslationError(
       `LLM request failed (${res.status}): ${body.slice(0, 200)}`,
       res.status,
     );
   }
-  return res;
 }
 
 /** Translate a single chunk of text, returning the full result at once. */
