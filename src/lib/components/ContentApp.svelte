@@ -2,7 +2,14 @@
   import { onMount } from 'svelte';
   import { browser } from 'wxt/browser';
   import { DEFAULT_LANG, languageLabel } from '../languages';
-  import { TRANSLATE_PORT, type StreamMessage } from '../messaging';
+  import {
+    TRANSLATE_PORT,
+    type BatchTranslateResponse,
+    type PageCommand,
+    type PageState,
+    type StreamMessage,
+  } from '../messaging';
+  import { batchNodes, collectTextNodes, runPool } from '../pageTranslate';
   import { settings } from '../settings.svelte';
   import { DEFAULT_POPUP_SIZE } from '../types';
 
@@ -17,6 +24,13 @@
   let errorMsg = $state('');
 
   let port: ReturnType<typeof browser.runtime.connect> | null = null;
+
+  // --- Full-page translation state ---
+  let pageState = $state<PageState>('original');
+  let progress = $state({ done: 0, total: 0 });
+  let pageError = $state('');
+  let cancelled = false;
+  const originals = new Map<Text, string>();
 
   const size = $derived(settings.value?.popupSize ?? DEFAULT_POPUP_SIZE);
   const targetLang = $derived(settings.value?.targetLang ?? DEFAULT_LANG);
@@ -123,12 +137,80 @@
     };
   }
 
+  async function translatePage() {
+    if (pageState === 'translating') return;
+    const nodes = collectTextNodes();
+    if (nodes.length === 0) return;
+
+    cancelled = false;
+    pageError = '';
+    progress = { done: 0, total: nodes.length };
+    pageState = 'translating';
+
+    const batches = batchNodes(nodes);
+    let failed = 0;
+
+    await runPool(batches, 3, async (batch) => {
+      if (cancelled) return;
+      const segments = batch.map((n) => n.nodeValue ?? '');
+      const res: BatchTranslateResponse = await browser.runtime.sendMessage({
+        type: 'translateBatch',
+        segments,
+        targetLang,
+      });
+      if (cancelled) return;
+      if (res.ok) {
+        batch.forEach((node, i) => {
+          if (!originals.has(node)) originals.set(node, node.nodeValue ?? '');
+          node.nodeValue = res.result[i] ?? node.nodeValue;
+        });
+      } else {
+        failed += batch.length;
+        pageError = res.error;
+      }
+      progress = { ...progress, done: progress.done + batch.length };
+    });
+
+    if (cancelled) {
+      restorePage();
+      return;
+    }
+    pageState = originals.size > 0 ? 'translated' : 'original';
+    if (failed > 0 && !pageError) pageError = `${failed} segment(s) could not be translated.`;
+  }
+
+  function restorePage() {
+    cancelled = true;
+    for (const [node, text] of originals) node.nodeValue = text;
+    originals.clear();
+    pageState = 'original';
+    progress = { done: 0, total: 0 };
+    pageError = '';
+  }
+
+  function onPageCommand(
+    msg: PageCommand,
+    _sender: unknown,
+    sendResponse: (state: PageState) => void,
+  ): boolean | undefined {
+    if (msg?.type === 'translatePage') {
+      translatePage();
+    } else if (msg?.type === 'restorePage') {
+      restorePage();
+    } else if (msg?.type === 'getPageState') {
+      sendResponse(pageState);
+    }
+    return undefined;
+  }
+
   onMount(() => {
+    browser.runtime.onMessage.addListener(onPageCommand);
     document.addEventListener('mouseup', onMouseUp);
     document.addEventListener('selectionchange', onSelectionChange);
     document.addEventListener('scroll', onScroll, true);
     document.addEventListener('keydown', onKeydown);
     return () => {
+      browser.runtime.onMessage.removeListener(onPageCommand);
       document.removeEventListener('mouseup', onMouseUp);
       document.removeEventListener('selectionchange', onSelectionChange);
       document.removeEventListener('scroll', onScroll, true);
@@ -174,6 +256,19 @@
           <span class="result">{result}</span>{#if status === 'streaming'}<span class="cursor"></span>{/if}
         {/if}
       </div>
+    </div>
+  {/if}
+
+  {#if pageState === 'translating'}
+    <div class="banner">
+      <span class="spinner"></span>
+      <span>Translating page… {progress.done}/{progress.total}</span>
+      <button class="banner-btn" onclick={restorePage}>Cancel</button>
+    </div>
+  {:else if pageState === 'translated'}
+    <div class="pill">
+      {#if pageError}<span class="pill-warn" title={pageError}>⚠</span>{/if}
+      <button class="banner-btn" onclick={restorePage}>Show original</button>
     </div>
   {/if}
 </div>
@@ -267,6 +362,67 @@
   }
   .error {
     color: #ff6b6b;
+  }
+  .banner {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #181b22;
+    color: #e6e8ec;
+    border: 1px solid #2c313c;
+    border-radius: 999px;
+    padding: 8px 8px 8px 16px;
+    font-size: 13px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  }
+  .pill {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #181b22;
+    border: 1px solid #2c313c;
+    border-radius: 999px;
+    padding: 6px 8px 6px 12px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  }
+  .pill-warn {
+    color: #ffb86b;
+    cursor: help;
+  }
+  .banner-btn {
+    background: #6d8bff;
+    color: white;
+    border: none;
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .banner-btn:hover {
+    background: #5a78f0;
+  }
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid #3a4150;
+    border-top-color: #6d8bff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .cursor {
     display: inline-block;

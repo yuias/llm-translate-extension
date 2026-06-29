@@ -1,14 +1,50 @@
 <script lang="ts">
   import { browser } from 'wxt/browser';
   import { LANGUAGES } from '../../lib/languages';
+  import type { PageCommand, PageState } from '../../lib/messaging';
   import { settings } from '../../lib/settings.svelte';
   import type { Settings } from '../../lib/types';
+
+  // 'unavailable' = no content script on this tab (e.g. chrome:// pages).
+  let pageState = $state<PageState | 'unavailable'>('unavailable');
 
   const activeProvider = $derived(
     settings.value?.providers.find((p) => p.id === settings.value?.activeProviderId) ??
       settings.value?.providers[0] ??
       null,
   );
+
+  async function activeTabId(): Promise<number | undefined> {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    return tab?.id;
+  }
+
+  async function sendToPage<T = void>(command: PageCommand): Promise<T | undefined> {
+    const id = await activeTabId();
+    if (id === undefined) return undefined;
+    try {
+      return (await browser.tabs.sendMessage(id, command)) as T;
+    } catch {
+      return undefined; // content script not present on this page
+    }
+  }
+
+  $effect(() => {
+    sendToPage<PageState>({ type: 'getPageState' }).then((state) => {
+      if (state) pageState = state;
+    });
+  });
+
+  async function togglePage() {
+    if (pageState === 'translated') {
+      await sendToPage({ type: 'restorePage' });
+      pageState = 'original';
+    } else {
+      await sendToPage({ type: 'translatePage' });
+      pageState = 'translating';
+      window.close(); // progress is shown in-page; free to dismiss the popup
+    }
+  }
 
   async function onLangChange(code: string) {
     if (!settings.value) return;
@@ -46,7 +82,15 @@
       {/if}
     </div>
 
-    <button class="primary" disabled={!activeProvider}>Translate this page</button>
+    <button
+      class="primary"
+      disabled={!activeProvider || pageState === 'unavailable' || pageState === 'translating'}
+      onclick={togglePage}
+    >
+      {#if pageState === 'translated'}Show original
+      {:else if pageState === 'translating'}Translating…
+      {:else}Translate this page{/if}
+    </button>
   {:else}
     <p class="muted">Loading…</p>
   {/if}

@@ -1,7 +1,13 @@
 import { browser } from 'wxt/browser';
-import { TRANSLATE_PORT, type StreamMessage, type TranslateRequest } from '../lib/messaging';
+import {
+  TRANSLATE_PORT,
+  type BatchTranslateMessage,
+  type BatchTranslateResponse,
+  type StreamMessage,
+  type TranslateRequest,
+} from '../lib/messaging';
 import { getActiveProvider } from '../lib/storage';
-import { translateTextStream } from '../lib/translator';
+import { translateSegments, translateTextStream } from '../lib/translator';
 
 export default defineBackground(() => {
   // Network calls to user-defined LLM endpoints run here in the service worker
@@ -42,4 +48,26 @@ export default defineBackground(() => {
       }
     });
   });
+
+  // One-shot batch translation used by full-page translation. Returns true to
+  // keep the message channel open for the async sendResponse.
+  browser.runtime.onMessage.addListener(
+    (msg: BatchTranslateMessage, _sender, sendResponse: (r: BatchTranslateResponse) => void) => {
+      if (msg?.type !== 'translateBatch') return;
+      (async () => {
+        try {
+          const provider = await getActiveProvider();
+          if (!provider) {
+            sendResponse({ ok: false, error: 'No translation provider is configured.' });
+            return;
+          }
+          const result = await translateSegments(provider, msg.segments, msg.targetLang);
+          sendResponse({ ok: true, result });
+        } catch (e) {
+          sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) });
+        }
+      })();
+      return true;
+    },
+  );
 });

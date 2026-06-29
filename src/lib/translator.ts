@@ -75,6 +75,62 @@ export async function translateText(
   return content.trim();
 }
 
+function batchSystemPrompt(target: LangCode): string {
+  return [
+    `You are a professional translator. You receive a JSON array of strings.`,
+    `Translate each element into ${languageLabel(target)}, auto-detecting the source language.`,
+    `Return ONLY a JSON array of strings of the SAME length and order — no prose, no code fences.`,
+    `Preserve each element's leading and trailing whitespace.`,
+    `If an element is already in the target language, return it unchanged.`,
+  ].join(' ');
+}
+
+/** Extract a JSON array from a model response, tolerating ```json fences. */
+function parseJsonArray(content: string): unknown {
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = (fenced?.[1] ?? content).trim();
+  const start = raw.indexOf('[');
+  const end = raw.lastIndexOf(']');
+  if (start === -1 || end === -1 || end < start) {
+    throw new TranslationError('Model did not return a JSON array');
+  }
+  return JSON.parse(raw.slice(start, end + 1));
+}
+
+/**
+ * Translate many short segments in a single request. Returns an array aligned
+ * 1:1 with the input, so callers can map results back to their DOM nodes.
+ */
+export async function translateSegments(
+  provider: Provider,
+  segments: string[],
+  target: LangCode,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  if (segments.length === 0) return [];
+  const res = await postChat(
+    provider,
+    [
+      { role: 'system', content: batchSystemPrompt(target) },
+      { role: 'user', content: JSON.stringify(segments) },
+    ],
+    signal,
+    false,
+  );
+  const data = await res.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string') {
+    throw new TranslationError('Unexpected response shape from LLM');
+  }
+  const parsed = parseJsonArray(content);
+  if (!Array.isArray(parsed) || parsed.length !== segments.length) {
+    throw new TranslationError(
+      `Batch size mismatch: expected ${segments.length}, got ${Array.isArray(parsed) ? parsed.length : 'non-array'}`,
+    );
+  }
+  return parsed.map((v) => String(v));
+}
+
 /**
  * Translate a single chunk, yielding partial text as it streams in.
  * Parses Server-Sent Events from an OpenAI-compatible streaming response.
