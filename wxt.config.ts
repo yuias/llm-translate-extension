@@ -4,6 +4,12 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   modules: ['@wxt-dev/module-svelte'],
   srcDir: 'src',
+  // Drop the auto-injected <link rel="modulepreload">. Chrome flags it as a
+  // "cross-world extension resource mismatch" for shared chunks, and the hint
+  // gives no real benefit for locally-bundled extension pages.
+  vite: () => ({
+    build: { modulePreload: false },
+  }),
   manifest: {
     name: 'LLM Translate',
     description: 'Translate selected text or whole pages with an OpenAI-compatible LLM',
