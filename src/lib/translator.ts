@@ -122,11 +122,13 @@ export async function translateText(
 
 function batchSystemPrompt(target: LangCode): string {
   return [
-    `You are a professional translator. You receive a JSON array of strings.`,
-    `Translate each element into ${languageLabel(target)}, auto-detecting the source language.`,
-    `Return ONLY a JSON array of strings of the SAME length and order — no prose, no code fences.`,
-    `Preserve each element's leading and trailing whitespace.`,
-    `If an element is already in the target language, return it unchanged.`,
+    `You are a professional translator. You receive a JSON array of objects, each with a numeric "id" and a "text" string.`,
+    `The texts are consecutive fragments extracted from a web page; many are sentence fragments split by inline links or formatting.`,
+    `Translate each "text" into ${languageLabel(target)} independently, auto-detecting the source language.`,
+    `Do NOT merge, split, reorder, or drop any item — translate each fragment on its own, even if it reads as part of a larger sentence.`,
+    `Return ONLY a JSON array of objects, each carrying the same "id" and its translated "text" — no prose, no code fences.`,
+    `Preserve each text's leading and trailing whitespace.`,
+    `If a text is already in the target language, return it unchanged.`,
   ].join(' ');
 }
 
@@ -163,56 +165,58 @@ async function* streamDeltas(res: Response): AsyncGenerator<string, void, void> 
 }
 
 /**
- * Incremental parser for a streamed JSON array of strings. Fed raw content
- * deltas, it emits each element the instant its closing quote arrives — so
- * callers can render translations as they complete instead of waiting for the
- * whole array. Assumes a flat array of strings (the batch response shape).
+ * Incremental parser for a streamed JSON array of `{ id, text }` objects. Fed
+ * raw content deltas, it emits each object the instant its closing brace
+ * arrives — so callers can render translations as they complete. Because every
+ * result carries its own id, a response that merges, reorders, or omits items
+ * still maps each translation back to the correct segment instead of drifting.
  */
-class JsonArrayStream {
-  private started = false; // seen the opening '['
-  private done = false; // seen the closing ']'
+class IndexedSegmentStream {
+  private buf = ''; // chars of the object currently being captured
+  private depth = 0; // object-brace nesting depth
   private inString = false;
   private escaped = false; // previous char was a backslash inside a string
-  private raw = ''; // chars of the current element, still JSON-escaped
 
-  /** Feed a delta; return any elements that completed within it. */
-  push(chunk: string): string[] {
-    const out: string[] = [];
+  /** Feed a delta; return any `{ id, text }` objects that completed within it. */
+  push(chunk: string): { id: number; text: string }[] {
+    const out: { id: number; text: string }[] = [];
     for (const ch of chunk) {
-      if (this.done) break;
+      // Once inside an object, accumulate verbatim so JSON.parse sees valid JSON.
+      if (this.depth > 0) this.buf += ch;
+
       if (this.inString) {
-        if (this.escaped) {
-          // Keep the escape sequence intact so JSON.parse can decode it.
-          this.raw += '\\' + ch;
-          this.escaped = false;
-        } else if (ch === '\\') {
-          this.escaped = true;
-        } else if (ch === '"') {
-          this.inString = false;
-          out.push(this.flush());
-        } else {
-          this.raw += ch;
-        }
-      } else if (ch === '"' && this.started) {
+        if (this.escaped) this.escaped = false;
+        else if (ch === '\\') this.escaped = true;
+        else if (ch === '"') this.inString = false;
+        continue;
+      }
+      if (ch === '"') {
         this.inString = true;
-      } else if (ch === '[') {
-        this.started = true;
-      } else if (ch === ']') {
-        this.done = true;
+      } else if (ch === '{') {
+        if (this.depth === 0) this.buf = '{'; // start a fresh top-level object
+        this.depth++;
+      } else if (ch === '}') {
+        if (this.depth > 0 && --this.depth === 0) {
+          const obj = this.parse(this.buf);
+          this.buf = '';
+          if (obj) out.push(obj);
+        }
       }
     }
     return out;
   }
 
-  /** Decode the collected element, tolerating odd escaping over dropping it. */
-  private flush(): string {
-    const raw = this.raw;
-    this.raw = '';
+  /** Decode one captured object, dropping anything that isn't a valid segment. */
+  private parse(raw: string): { id: number; text: string } | null {
     try {
-      return JSON.parse(`"${raw}"`);
+      const obj = JSON.parse(raw);
+      if (typeof obj?.id === 'number' && typeof obj?.text === 'string') {
+        return { id: obj.id, text: obj.text };
+      }
     } catch {
-      return raw;
+      // Truncated or malformed object — skip it; its node stays untranslated.
     }
+    return null;
   }
 }
 
@@ -239,8 +243,9 @@ export async function* translateTextStream(
 
 /**
  * Translate many short segments in one streaming request, yielding each result
- * as soon as the model finishes it. Emitted indexes are 0-based and ordered, so
- * callers map them straight back to the input array (and their DOM nodes).
+ * as soon as the model finishes it. Each `index` echoes the segment's position
+ * in the input array, so callers map results straight back to their DOM nodes
+ * regardless of the order — or completeness — in which the model returns them.
  */
 export async function* translateSegmentsStream(
   provider: Provider,
@@ -249,20 +254,20 @@ export async function* translateSegmentsStream(
   signal?: AbortSignal,
 ): AsyncGenerator<{ index: number; text: string }, void, void> {
   if (segments.length === 0) return;
+  const indexed = segments.map((text, id) => ({ id, text }));
   const res = await postChat(
     provider,
     [
       { role: 'system', content: batchSystemPrompt(target) },
-      { role: 'user', content: JSON.stringify(segments) },
+      { role: 'user', content: JSON.stringify(indexed) },
     ],
     signal,
     true,
   );
-  const parser = new JsonArrayStream();
-  let index = 0;
+  const parser = new IndexedSegmentStream();
   for await (const delta of streamDeltas(res)) {
-    for (const text of parser.push(delta)) {
-      yield { index: index++, text };
+    for (const { id, text } of parser.push(delta)) {
+      yield { index: id, text };
     }
   }
 }

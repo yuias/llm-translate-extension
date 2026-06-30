@@ -175,6 +175,7 @@
       const p = browser.runtime.connect({ name: TRANSLATE_PORT });
       pagePorts.add(p);
       const applied: Text[] = []; // nodes this batch mutated, for rollback on error
+      const seen = new Set<number>(); // segment ids already applied (guard repeats)
       const finish = () => {
         pagePorts.delete(p);
         p.disconnect();
@@ -184,7 +185,8 @@
         if (cancelled) return finish();
         if (msg.type === 'segment') {
           const node = batch[msg.index];
-          if (node) {
+          if (node && !seen.has(msg.index)) {
+            seen.add(msg.index);
             if (!originals.has(node)) originals.set(node, node.nodeValue ?? '');
             node.nodeValue = msg.text;
             applied.push(node);

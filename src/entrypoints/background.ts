@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import { TRANSLATE_PORT, type StreamMessage, type StreamRequest } from '../lib/messaging';
 import { getActiveProvider } from '../lib/storage';
-import { translateSegmentsStream, translateTextStream } from '../lib/translator';
+import { translateSegmentsStream, translateText, translateTextStream } from '../lib/translator';
 
 export default defineBackground(() => {
   // Network calls to user-defined LLM endpoints run here in the service worker
@@ -29,22 +29,38 @@ export default defineBackground(() => {
           return;
         }
         if (msg.kind === 'batch') {
-          let count = 0;
+          // Each segment carries its own id, so the model merging or dropping
+          // items only leaves those nodes untranslated — the rest still land on
+          // the right node. No all-or-nothing count check needed.
+          const seen = new Set<number>();
           for await (const seg of translateSegmentsStream(
             provider,
             msg.segments,
             msg.targetLang,
             controller.signal,
           )) {
+            seen.add(seg.index);
             send({ type: 'segment', index: seg.index, text: seg.text });
-            count++;
           }
-          if (count !== msg.segments.length) {
-            send({
-              type: 'error',
-              message: `Batch size mismatch: expected ${msg.segments.length}, got ${count}`,
-            });
-            return;
+          // Patch the gaps: any segment the model merged away, dropped, or
+          // truncated gets retried on its own. A lone string can't be folded
+          // into its neighbours, so this guarantees coverage (and doubles as a
+          // fallback when the model ignores the array format entirely).
+          for (let i = 0; i < msg.segments.length; i++) {
+            if (controller.signal.aborted) return;
+            if (seen.has(i) || !msg.segments[i]!.trim()) continue;
+            try {
+              const text = await translateText(
+                provider,
+                msg.segments[i]!,
+                msg.targetLang,
+                controller.signal,
+              );
+              send({ type: 'segment', index: i, text });
+            } catch {
+              if (controller.signal.aborted) return;
+              // Leave just this segment untranslated rather than failing the batch.
+            }
           }
         } else {
           for await (const delta of translateTextStream(
