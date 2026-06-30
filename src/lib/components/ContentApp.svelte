@@ -29,7 +29,13 @@
   let progress = $state({ done: 0, total: 0 });
   let pageError = $state('');
   let cancelled = false;
+  // True once a translation has been produced this session, even while the
+  // original text is shown — lets us re-apply the cache instead of re-fetching.
+  let cached = $state(false);
   const originals = new Map<Text, string>();
+  // Session-only cache of translated text, keyed by node. Discarded on
+  // reload/navigation since the content script (and this Map) is torn down.
+  const translations = new Map<Text, string>();
   // Open streaming ports — one per in-flight batch — tracked so we can tear
   // them all down on cancel/unmount.
   const pagePorts = new Set<ReturnType<typeof browser.runtime.connect>>();
@@ -156,9 +162,10 @@
     await runPool(batches, 3, (batch) => streamBatch(batch));
 
     if (cancelled) {
-      restorePage();
+      cancelTranslation();
       return;
     }
+    cached = translations.size > 0;
     pageState = originals.size > 0 ? 'translated' : 'original';
     const failed = progress.total - progress.done;
     if (failed > 0 && !pageError) pageError = `${failed} segment(s) could not be translated.`;
@@ -189,6 +196,7 @@
             seen.add(msg.index);
             if (!originals.has(node)) originals.set(node, node.nodeValue ?? '');
             node.nodeValue = msg.text;
+            translations.set(node, msg.text);
             applied.push(node);
             progress = { ...progress, done: progress.done + 1 };
           }
@@ -203,6 +211,7 @@
             if (original !== undefined) {
               node.nodeValue = original;
               originals.delete(node);
+              translations.delete(node);
             }
           }
           progress = { ...progress, done: progress.done - applied.length };
@@ -213,13 +222,28 @@
     });
   }
 
-  function restorePage() {
+  /** Abort an in-flight translation and drop everything, including the cache. */
+  function cancelTranslation() {
     cancelled = true;
     for (const [node, text] of originals) node.nodeValue = text;
     originals.clear();
+    translations.clear();
+    cached = false;
     pageState = 'original';
     progress = { done: 0, total: 0 };
     pageError = '';
+  }
+
+  /** Show the original text but keep the session cache for instant re-display. */
+  function showOriginal() {
+    for (const [node, text] of originals) node.nodeValue = text;
+    pageState = 'original';
+  }
+
+  /** Re-apply the cached translation without calling the API again. */
+  function showTranslation() {
+    for (const [node, text] of translations) node.nodeValue = text;
+    pageState = 'translated';
   }
 
   function onPageCommand(
@@ -228,9 +252,11 @@
     sendResponse: (state: PageState) => void,
   ): boolean | undefined {
     if (msg?.type === 'translatePage') {
-      translatePage();
+      // Reuse the session cache when available instead of re-translating.
+      if (cached && pageState === 'original') showTranslation();
+      else translatePage();
     } else if (msg?.type === 'restorePage') {
-      restorePage();
+      showOriginal();
     } else if (msg?.type === 'getPageState') {
       sendResponse(pageState);
     }
@@ -297,12 +323,16 @@
     <div class="banner">
       <span class="spinner"></span>
       <span>Translating page… {progress.done}/{progress.total}</span>
-      <button class="banner-btn" onclick={restorePage}>Cancel</button>
+      <button class="banner-btn" onclick={cancelTranslation}>Cancel</button>
     </div>
   {:else if pageState === 'translated'}
     <div class="pill">
       {#if pageError}<span class="pill-warn" title={pageError}>⚠</span>{/if}
-      <button class="banner-btn" onclick={restorePage}>Show original</button>
+      <button class="banner-btn" onclick={showOriginal}>Show original</button>
+    </div>
+  {:else if cached}
+    <div class="pill">
+      <button class="banner-btn" onclick={showTranslation}>Show translation</button>
     </div>
   {/if}
 </div>
