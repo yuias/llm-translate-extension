@@ -28,15 +28,15 @@ Svelte 5 + TypeScript.
 ## Development
 
 ```bash
-npm install        # also runs `wxt prepare`
-npm run dev        # launch Chrome with HMR
-npm run dev:firefox
-npm run compile    # type-check (svelte-check)
-npm run build      # production build into .output/
-npm run zip        # package for store upload
+pnpm install      # also runs `wxt prepare`
+pnpm dev          # launch Chrome with HMR
+pnpm dev:firefox
+pnpm compile      # type-check (svelte-check)
+pnpm build        # production build into .output/
+pnpm zip          # package for store upload
 ```
 
-After `npm run build`, load `.output/chrome-mv3` via
+After `pnpm build`, load `.output/chrome-mv3` via
 `chrome://extensions` → *Load unpacked*.
 
 ## Architecture
