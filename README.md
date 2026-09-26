@@ -1,4 +1,4 @@
-# LLM Translate
+# llm-translate-extension
 
 A Chrome/Edge (Manifest V3) extension that translates text using any
 OpenAI-compatible LLM endpoint. Built with [WXT](https://wxt.dev), Vite, and
@@ -57,3 +57,7 @@ hours — unusable for an on-demand "translate this page" action. Full-page
 translation instead collects text nodes, groups them into small character-
 bounded batches, and sends ordinary chat-completion requests (bounded
 concurrency), mapping each JSON-array result back to its source node.
+
+## Licence
+
+[MIT](LICENSE)
