@@ -12,7 +12,11 @@ Svelte 5 + TypeScript.
 - **Full-page translation** — translate a whole page in place, preserving its
   layout. Toggle back to the original instantly.
 - **Bring your own model** — add/remove multiple OpenAI-compatible providers
-  (endpoint, model, API key, display name) and switch the active one.
+  (endpoint, model, API key, display name) and switch the active one. An
+  optional extra JSON request body per provider passes vendor-specific options,
+  e.g. `{"reasoning_effort":"low"}` to make reasoning models answer faster.
+- **Tone** — keep the original register, or rewrite it as polite, business,
+  casual, an X post, or plain language.
 - **Languages** — translate into any of the G7 languages plus Chinese and
   Russian. Source language is auto-detected.
 
@@ -45,9 +49,9 @@ After `pnpm build`, load `.output/chrome-mv3` via
 | --- | --- | --- |
 | Background | `src/entrypoints/background.ts` | Streaming port + batch message handler |
 | Content overlay | `src/lib/components/ContentApp.svelte` | Mounted in a shadow root; selection UI + page translation |
-| Options | `src/entrypoints/options/` | Provider CRUD, target language, popup size |
-| Popup | `src/entrypoints/popup/` | Active provider, language, page toggle |
-| LLM client | `src/lib/translator.ts` | Chat completions: single, streaming, and JSON-array batch, with retry/backoff |
+| Options | `src/entrypoints/options/` | Provider CRUD, target language, tone, popup size |
+| Popup | `src/entrypoints/popup/` | Active provider, language, tone, page toggle |
+| LLM client | `src/lib/translator.ts` | Chat completions: single, streaming, and JSON-array batch, with retry/backoff and timeouts |
 | Page DOM | `src/lib/pageTranslate.ts` | Text-node collection, batching, concurrency pool |
 
 ### Why client-side batching instead of the Batch API
