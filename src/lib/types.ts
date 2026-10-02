@@ -18,12 +18,16 @@ export interface PopupSize {
 /** Color scheme preference; 'system' follows the OS setting. */
 export type ThemeMode = 'system' | 'dark' | 'light';
 
+/** Register the translation is written in; see tones.ts for the prompt clauses. */
+export type Tone = 'normal' | 'polite' | 'business' | 'casual' | 'x' | 'plain';
+
 export interface Settings {
   providers: Provider[];
   activeProviderId: string | null;
   targetLang: LangCode;
   popupSize: PopupSize;
   theme: ThemeMode;
+  tone: Tone;
 }
 
 export const DEFAULT_POPUP_SIZE: PopupSize = { width: 360, height: 280 };

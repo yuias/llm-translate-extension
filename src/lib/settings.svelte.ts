@@ -1,4 +1,4 @@
-import { settingsStorage } from './storage';
+import { normalizeSettings, settingsStorage } from './storage';
 import type { Settings } from './types';
 
 /**
@@ -11,11 +11,11 @@ class SettingsStore {
 
   constructor() {
     settingsStorage.getValue().then((v) => {
-      this.value = v;
+      this.value = normalizeSettings(v);
       this.loading = false;
     });
     settingsStorage.watch((v) => {
-      if (v) this.value = v;
+      if (v) this.value = normalizeSettings(v);
     });
   }
 
