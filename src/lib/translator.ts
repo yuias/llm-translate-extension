@@ -134,11 +134,17 @@ function batchSystemPrompt(target: LangCode): string {
   ].join(' ');
 }
 
+/** One parsed SSE delta: translated text, or reasoning text from a thinking model. */
+export interface StreamDelta {
+  kind: 'content' | 'reasoning';
+  text: string;
+}
+
 /**
- * Yield content deltas from an OpenAI-compatible streaming (SSE) response.
- * Shared by the single-text and batch streaming paths.
+ * Yield content and reasoning deltas from an OpenAI-compatible streaming (SSE)
+ * response. Shared by the single-text and batch streaming paths.
  */
-async function* streamDeltas(res: Response): AsyncGenerator<string, void, void> {
+async function* streamDeltas(res: Response): AsyncGenerator<StreamDelta, void, void> {
   if (!res.body) throw new TranslationError('Streaming not supported by endpoint');
 
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -156,12 +162,20 @@ async function* streamDeltas(res: Response): AsyncGenerator<string, void, void> 
       if (!line.startsWith('data:')) continue;
       const payload = line.slice(5).trim();
       if (payload === '[DONE]') return;
+      let delta: { reasoning_content?: unknown; reasoning?: unknown; content?: unknown } | undefined;
       try {
-        const delta = JSON.parse(payload)?.choices?.[0]?.delta?.content;
-        if (typeof delta === 'string' && delta) yield delta;
+        delta = JSON.parse(payload)?.choices?.[0]?.delta;
       } catch {
         // Ignore keep-alive comments and malformed partial frames.
+        continue;
       }
+      // GLM/DeepSeek stream `reasoning_content`; OpenRouter and others use `reasoning`.
+      const reasoning = delta?.reasoning_content || delta?.reasoning;
+      if (typeof reasoning === 'string' && reasoning) {
+        yield { kind: 'reasoning', text: reasoning };
+      }
+      const content = delta?.content;
+      if (typeof content === 'string' && content) yield { kind: 'content', text: content };
     }
   }
 }
@@ -230,7 +244,7 @@ export async function* translateTextStream(
   text: string,
   target: LangCode,
   signal?: AbortSignal,
-): AsyncGenerator<string, void, void> {
+): AsyncGenerator<StreamDelta, void, void> {
   const res = await postChat(
     provider,
     [
@@ -268,7 +282,9 @@ export async function* translateSegmentsStream(
   );
   const parser = new IndexedSegmentStream();
   for await (const delta of streamDeltas(res)) {
-    for (const { id, text } of parser.push(delta)) {
+    // Reasoning text is not JSON and would corrupt the parser state.
+    if (delta.kind !== 'content') continue;
+    for (const { id, text } of parser.push(delta.text)) {
       yield { index: id, text };
     }
   }

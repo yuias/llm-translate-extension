@@ -12,6 +12,10 @@ export type StreamMessage =
   // 'text' mode: token deltas to append; 'batch' mode: a completed segment.
   | { type: 'chunk'; delta: string }
   | { type: 'segment'; index: number; text: string }
+  // The model is reasoning before it emits translated text (text mode only).
+  | { type: 'thinking' }
+  // Keep-alive sent while a request is in flight; receivers ignore it.
+  | { type: 'ping' }
   | { type: 'done' }
   | { type: 'error'; message: string };
 
