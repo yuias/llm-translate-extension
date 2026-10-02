@@ -13,7 +13,7 @@
   import { DEFAULT_POPUP_SIZE, DEFAULT_THEME } from '../types';
 
   type Point = { x: number; y: number };
-  type Status = 'idle' | 'loading' | 'streaming' | 'done' | 'error';
+  type Status = 'idle' | 'loading' | 'thinking' | 'streaming' | 'done' | 'error';
 
   const LOST_CONNECTION_MSG = 'Connection to the background worker was lost. Please try again.';
 
@@ -111,7 +111,10 @@
       port = null;
     });
     p.onMessage.addListener((msg: StreamMessage) => {
-      if (msg.type === 'chunk') {
+      if (msg.type === 'thinking') {
+        // Late reasoning notices must not override streaming/done/error.
+        if (status === 'loading') status = 'thinking';
+      } else if (msg.type === 'chunk') {
         status = 'streaming';
         result += msg.delta;
       } else if (msg.type === 'done') {
@@ -336,8 +339,8 @@
         </div>
       </header>
       <div class="body">
-        {#if status === 'loading'}
-          <span class="muted">Translating…</span>
+        {#if status === 'loading' || status === 'thinking'}
+          <span class="muted">{status === 'thinking' ? 'Thinking…' : 'Translating…'}</span>
         {:else if status === 'error'}
           <span class="error">{errorMsg}</span>
         {:else}
