@@ -28,6 +28,68 @@ function systemPrompt(target: LangCode): string {
 }
 
 const MAX_RETRIES = 3;
+// Generous because non-streaming responses from reasoning models only send
+// headers once the whole answer is ready.
+const FIRST_BYTE_TIMEOUT_MS = 120_000;
+// Reasoning frames count as activity, so this only trips on a stalled stream.
+const IDLE_TIMEOUT_MS = 60_000;
+// Bounds the silent wait across retries; providers can send very large values.
+const MAX_RETRY_AFTER_MS = 10_000;
+
+/**
+ * Re-armable timeout that owns a request's abort signal (headers and body),
+ * linked to the caller's signal so user aborts still propagate.
+ */
+class RequestTimer {
+  private readonly controller = new AbortController();
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private timedOutAfterMs: number | null = null;
+  private readonly onParentAbort = () => this.controller.abort();
+
+  constructor(private readonly parent?: AbortSignal) {
+    if (parent?.aborted) this.controller.abort();
+    else parent?.addEventListener('abort', this.onParentAbort, { once: true });
+  }
+
+  get signal(): AbortSignal {
+    return this.controller.signal;
+  }
+
+  /** (Re)start the countdown; on expiry the request is aborted as a timeout. */
+  arm(ms: number): void {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timedOutAfterMs = ms;
+      this.controller.abort();
+    }, ms);
+  }
+
+  disarm(): void {
+    clearTimeout(this.timer);
+  }
+
+  /** Stop the timer and unlink from the caller's signal. Call in finally. */
+  dispose(): void {
+    this.disarm();
+    this.parent?.removeEventListener('abort', this.onParentAbort);
+    // Once unlinked, a later user abort can no longer reach the fetch, so
+    // close the connection now in case the consumer stopped reading early.
+    this.controller.abort();
+  }
+
+  /**
+   * Convert an abort caused by this timer into a TranslationError; rethrow
+   * anything else unchanged (including user aborts, which background ignores).
+   */
+  rethrow(e: unknown): never {
+    if (this.timedOutAfterMs !== null && !this.parent?.aborted) {
+      throw new TranslationError(
+        `LLM did not respond within ${Math.round(this.timedOutAfterMs / 1000)} s`,
+      );
+    }
+    throw e;
+  }
+}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -49,7 +111,9 @@ function retryDelayMs(res: Response, attempt: number): number {
   const retryAfter = res.headers.get('retry-after');
   if (retryAfter) {
     const seconds = Number(retryAfter);
-    if (Number.isFinite(seconds)) return seconds * 1000;
+    if (Number.isFinite(seconds)) {
+      return Math.min(Math.max(seconds, 0) * 1000, MAX_RETRY_AFTER_MS);
+    }
   }
   return Math.min(1000 * 2 ** attempt, 8000);
 }
@@ -63,37 +127,57 @@ function resolveEndpoint(endpoint: string): string {
   return /\/chat\/completions$/.test(trimmed) ? trimmed : `${trimmed}/chat/completions`;
 }
 
+/** On success the caller owns `timer` and must dispose it. */
 async function postChat(
   provider: Provider,
   messages: ChatMessage[],
   signal: AbortSignal | undefined,
   stream: boolean,
-): Promise<Response> {
+): Promise<{ res: Response; timer: RequestTimer }> {
   const url = resolveEndpoint(provider.endpoint);
-  // Retry transient failures (rate limits, upstream 5xx) with backoff.
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${provider.apiKey}`,
-      },
-      body: JSON.stringify({ model: provider.model, messages, stream, temperature: 0.2 }),
-      signal,
-    });
-    if (res.ok) return res;
+  const timer: RequestTimer = new RequestTimer(signal);
+  try {
+    // Retry transient failures (rate limits, upstream 5xx) with backoff.
+    for (let attempt = 0; ; attempt++) {
+      timer.arm(FIRST_BYTE_TIMEOUT_MS);
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${provider.apiKey}`,
+          },
+          body: JSON.stringify({ model: provider.model, messages, stream, temperature: 0.2 }),
+          signal: timer.signal,
+        });
+      } catch (e) {
+        timer.rethrow(e);
+      }
+      timer.disarm();
+      if (res.ok) return { res, timer };
 
-    const retryable = res.status === 429 || res.status >= 500;
-    if (retryable && attempt < MAX_RETRIES) {
-      await sleep(retryDelayMs(res, attempt), signal);
-      continue;
+      const retryable = res.status === 429 || res.status >= 500;
+      if (retryable && attempt < MAX_RETRIES) {
+        // Release the connection instead of holding it open through the backoff.
+        await res.body?.cancel().catch(() => {});
+        // Sleep on the caller's signal: the request timer is not running here.
+        await sleep(retryDelayMs(res, attempt), signal);
+        continue;
+      }
+
+      // Bound the error body read so a provider that never finishes it cannot hang us.
+      timer.arm(IDLE_TIMEOUT_MS);
+      const body = await res.text().catch(() => '');
+      timer.disarm();
+      throw new TranslationError(
+        `LLM request failed (${res.status}): ${body.slice(0, 200)}`,
+        res.status,
+      );
     }
-
-    const body = await res.text().catch(() => '');
-    throw new TranslationError(
-      `LLM request failed (${res.status}): ${body.slice(0, 200)}`,
-      res.status,
-    );
+  } catch (e) {
+    timer.dispose();
+    throw e;
   }
 }
 
@@ -104,7 +188,7 @@ export async function translateText(
   target: LangCode,
   signal?: AbortSignal,
 ): Promise<string> {
-  const res = await postChat(
+  const { res, timer } = await postChat(
     provider,
     [
       { role: 'system', content: systemPrompt(target) },
@@ -113,7 +197,16 @@ export async function translateText(
     signal,
     false,
   );
-  const data = await res.json();
+  let data: any;
+  try {
+    // Headers arrive only when the body is nearly ready, so a short read timeout is fine.
+    timer.arm(IDLE_TIMEOUT_MS);
+    data = await res.json();
+  } catch (e) {
+    timer.rethrow(e);
+  } finally {
+    timer.dispose();
+  }
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== 'string') {
     throw new TranslationError('Unexpected response shape from LLM');
@@ -144,39 +237,56 @@ export interface StreamDelta {
  * Yield content and reasoning deltas from an OpenAI-compatible streaming (SSE)
  * response. Shared by the single-text and batch streaming paths.
  */
-async function* streamDeltas(res: Response): AsyncGenerator<StreamDelta, void, void> {
-  if (!res.body) throw new TranslationError('Streaming not supported by endpoint');
+async function* streamDeltas(
+  res: Response,
+  timer: RequestTimer,
+): AsyncGenerator<StreamDelta, void, void> {
+  try {
+    if (!res.body) throw new TranslationError('Streaming not supported by endpoint');
 
-  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buffer = '';
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += value;
-
-    // SSE frames are newline-delimited; each "data:" line holds a JSON chunk.
-    let nl: number;
-    while ((nl = buffer.indexOf('\n')) !== -1) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (payload === '[DONE]') return;
-      let delta: { reasoning_content?: unknown; reasoning?: unknown; content?: unknown } | undefined;
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = '';
+    while (true) {
+      timer.arm(IDLE_TIMEOUT_MS);
+      let chunk: ReadableStreamReadResult<string>;
       try {
-        delta = JSON.parse(payload)?.choices?.[0]?.delta;
-      } catch {
-        // Ignore keep-alive comments and malformed partial frames.
-        continue;
+        chunk = await reader.read();
+      } catch (e) {
+        timer.rethrow(e);
       }
-      // GLM/DeepSeek stream `reasoning_content`; OpenRouter and others use `reasoning`.
-      const reasoning = delta?.reasoning_content || delta?.reasoning;
-      if (typeof reasoning === 'string' && reasoning) {
-        yield { kind: 'reasoning', text: reasoning };
+      // Time spent by the consumer while paused at yield must not count as idle.
+      timer.disarm();
+      const { value, done } = chunk;
+      if (done) break;
+      buffer += value;
+
+      // SSE frames are newline-delimited; each "data:" line holds a JSON chunk.
+      let nl: number;
+      while ((nl = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') return;
+        let delta: { reasoning_content?: unknown; reasoning?: unknown; content?: unknown } | undefined;
+        try {
+          delta = JSON.parse(payload)?.choices?.[0]?.delta;
+        } catch {
+          // Ignore keep-alive comments and malformed partial frames.
+          continue;
+        }
+        // GLM/DeepSeek stream `reasoning_content`; OpenRouter and others use `reasoning`.
+        const reasoning = delta?.reasoning_content || delta?.reasoning;
+        if (typeof reasoning === 'string' && reasoning) {
+          yield { kind: 'reasoning', text: reasoning };
+        }
+        const content = delta?.content;
+        if (typeof content === 'string' && content) yield { kind: 'content', text: content };
       }
-      const content = delta?.content;
-      if (typeof content === 'string' && content) yield { kind: 'content', text: content };
     }
+  } finally {
+    // Also runs when the consumer stops iterating early.
+    timer.dispose();
   }
 }
 
@@ -245,7 +355,7 @@ export async function* translateTextStream(
   target: LangCode,
   signal?: AbortSignal,
 ): AsyncGenerator<StreamDelta, void, void> {
-  const res = await postChat(
+  const { res, timer } = await postChat(
     provider,
     [
       { role: 'system', content: systemPrompt(target) },
@@ -254,7 +364,7 @@ export async function* translateTextStream(
     signal,
     true,
   );
-  yield* streamDeltas(res);
+  yield* streamDeltas(res, timer);
 }
 
 /**
@@ -271,7 +381,7 @@ export async function* translateSegmentsStream(
 ): AsyncGenerator<{ index: number; text: string }, void, void> {
   if (segments.length === 0) return;
   const indexed = segments.map((text, id) => ({ id, text }));
-  const res = await postChat(
+  const { res, timer } = await postChat(
     provider,
     [
       { role: 'system', content: batchSystemPrompt(target) },
@@ -281,7 +391,7 @@ export async function* translateSegmentsStream(
     true,
   );
   const parser = new IndexedSegmentStream();
-  for await (const delta of streamDeltas(res)) {
+  for await (const delta of streamDeltas(res, timer)) {
     // Reasoning text is not JSON and would corrupt the parser state.
     if (delta.kind !== 'content') continue;
     for (const { id, text } of parser.push(delta.text)) {
