@@ -15,6 +15,8 @@
   type Point = { x: number; y: number };
   type Status = 'idle' | 'loading' | 'streaming' | 'done' | 'error';
 
+  const LOST_CONNECTION_MSG = 'Connection to the background worker was lost. Please try again.';
+
   let button = $state<Point | null>(null);
   let selectedText = $state('');
   let popup = $state<Point | null>(null);
@@ -96,8 +98,19 @@
 
   function startStream(text: string) {
     port?.disconnect();
-    port = browser.runtime.connect({ name: TRANSLATE_PORT });
-    port.onMessage.addListener((msg: StreamMessage) => {
+    const p = browser.runtime.connect({ name: TRANSLATE_PORT });
+    port = p;
+    // Fires when the worker dies mid-stream (own-side disconnect() does not
+    // fire it in Chrome). Without it the popup would stay on "Translating…".
+    p.onDisconnect.addListener(() => {
+      // Reading lastError also silences Chrome's "Unchecked runtime.lastError".
+      const detail = browser.runtime.lastError?.message;
+      if (port !== p || status === 'done' || status === 'error') return;
+      status = 'error';
+      errorMsg = detail ? `${LOST_CONNECTION_MSG} (${detail})` : LOST_CONNECTION_MSG;
+      port = null;
+    });
+    p.onMessage.addListener((msg: StreamMessage) => {
       if (msg.type === 'chunk') {
         status = 'streaming';
         result += msg.delta;
@@ -108,7 +121,7 @@
         errorMsg = msg.message;
       }
     });
-    port.postMessage({ kind: 'text', text, targetLang });
+    p.postMessage({ kind: 'text', text, targetLang });
   }
 
   function closePopup() {
@@ -183,11 +196,36 @@
       pagePorts.add(p);
       const applied: Text[] = []; // nodes this batch mutated, for rollback on error
       const seen = new Set<number>(); // segment ids already applied (guard repeats)
+      let settled = false;
       const finish = () => {
+        if (settled) return;
+        settled = true;
         pagePorts.delete(p);
         p.disconnect();
         resolve();
       };
+      // A failed batch is all-or-nothing: undo its partial in-place edits so
+      // the page never shows a half-translated batch.
+      const rollback = () => {
+        for (const node of applied) {
+          const original = originals.get(node);
+          if (original !== undefined) {
+            node.nodeValue = original;
+            originals.delete(node);
+            translations.delete(node);
+          }
+        }
+        progress = { ...progress, done: progress.done - applied.length };
+      };
+      // The worker can die mid-batch; without this the pool would wait forever.
+      p.onDisconnect.addListener(() => {
+        void browser.runtime.lastError; // mark as checked to avoid a console warning
+        if (settled) return;
+        if (cancelled) return finish();
+        pageError = LOST_CONNECTION_MSG;
+        rollback();
+        finish();
+      });
       p.onMessage.addListener((msg: StreamMessage) => {
         if (cancelled) return finish();
         if (msg.type === 'segment') {
@@ -204,17 +242,7 @@
           finish();
         } else if (msg.type === 'error') {
           pageError = msg.message;
-          // A failed batch is all-or-nothing: undo its partial in-place edits so
-          // the page never shows a half-translated batch.
-          for (const node of applied) {
-            const original = originals.get(node);
-            if (original !== undefined) {
-              node.nodeValue = original;
-              originals.delete(node);
-              translations.delete(node);
-            }
-          }
-          progress = { ...progress, done: progress.done - applied.length };
+          rollback();
           finish();
         }
       });
