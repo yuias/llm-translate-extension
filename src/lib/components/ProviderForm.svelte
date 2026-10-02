@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { requestEndpointPermission } from '../permissions';
+  import { DEFAULT_TONE } from '../tones';
   import { translateText } from '../translator';
   import type { Provider } from '../types';
 
@@ -32,7 +33,7 @@
         test = { kind: 'error', message: 'Host permission was denied for this endpoint.' };
         return;
       }
-      const out = await translateText(draft, 'Hello, world.', 'ja');
+      const out = await translateText(draft, 'Hello, world.', 'ja', DEFAULT_TONE);
       test = { kind: 'ok', message: out.slice(0, 60) };
     } catch (e) {
       test = { kind: 'error', message: e instanceof Error ? e.message : String(e) };

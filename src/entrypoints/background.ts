@@ -1,6 +1,6 @@
 import { browser } from 'wxt/browser';
 import { TRANSLATE_PORT, type StreamMessage, type StreamRequest } from '../lib/messaging';
-import { getActiveProvider } from '../lib/storage';
+import { getActiveProvider, getSettings } from '../lib/storage';
 import { translateSegmentsStream, translateText, translateTextStream } from '../lib/translator';
 
 // Must stay well under Chrome's 30 s service-worker idle timeout.
@@ -32,7 +32,7 @@ export default defineBackground(() => {
       const heartbeat = setInterval(() => send({ type: 'ping' }), HEARTBEAT_MS);
       try {
         try {
-          const provider = await getActiveProvider();
+          const [provider, { tone }] = await Promise.all([getActiveProvider(), getSettings()]);
           if (!provider) {
             send({ type: 'error', message: 'No translation provider is configured.' });
             return;
@@ -46,6 +46,7 @@ export default defineBackground(() => {
               provider,
               msg.segments,
               msg.targetLang,
+              tone,
               controller.signal,
             )) {
               seen.add(seg.index);
@@ -63,6 +64,7 @@ export default defineBackground(() => {
                   provider,
                   msg.segments[i]!,
                   msg.targetLang,
+                  tone,
                   controller.signal,
                 );
                 send({ type: 'segment', index: i, text });
@@ -77,6 +79,7 @@ export default defineBackground(() => {
               provider,
               msg.text,
               msg.targetLang,
+              tone,
               controller.signal,
             )) {
               if (d.kind === 'content') {
