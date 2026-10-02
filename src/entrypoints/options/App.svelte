@@ -4,6 +4,7 @@
   import { LANGUAGES } from '../../lib/languages';
   import { settings } from '../../lib/settings.svelte';
   import { applyTheme } from '../../lib/theme';
+  import { TONES } from '../../lib/tones';
   import { DEFAULT_THEME, type Provider, type Settings } from '../../lib/types';
 
   // The provider currently being added/edited, or null when the list is shown.
@@ -67,6 +68,18 @@
           {/each}
         </select>
       </label>
+      <label class="row">
+        <span>Tone</span>
+        <select
+          value={s.tone}
+          onchange={(e) => update((d) => (d.tone = e.currentTarget.value as Settings['tone']))}
+        >
+          {#each TONES as t}
+            <option value={t.id} title={t.hint}>{t.label}</option>
+          {/each}
+        </select>
+      </label>
+      <p class="muted hint">{TONES.find((t) => t.id === s.tone)?.hint}</p>
       <label class="row">
         <span>Theme</span>
         <select

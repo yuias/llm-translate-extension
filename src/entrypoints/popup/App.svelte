@@ -4,6 +4,7 @@
   import type { PageCommand, PageState } from '../../lib/messaging';
   import { settings } from '../../lib/settings.svelte';
   import { applyTheme } from '../../lib/theme';
+  import { TONES } from '../../lib/tones';
   import { DEFAULT_THEME, type Settings } from '../../lib/types';
 
   // Keep the popup scheme in sync with the saved preference.
@@ -55,6 +56,11 @@
     await settings.save({ ...$state.snapshot(settings.value), targetLang: code as Settings['targetLang'] });
   }
 
+  async function onToneChange(tone: string) {
+    if (!settings.value) return;
+    await settings.save({ ...$state.snapshot(settings.value), tone: tone as Settings['tone'] });
+  }
+
   function openOptions() {
     browser.runtime.openOptionsPage();
   }
@@ -72,6 +78,15 @@
       <select value={settings.value.targetLang} onchange={(e) => onLangChange(e.currentTarget.value)}>
         {#each LANGUAGES as lang}
           <option value={lang.code}>{lang.label} · {lang.native}</option>
+        {/each}
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Tone</span>
+      <select value={settings.value.tone} onchange={(e) => onToneChange(e.currentTarget.value)}>
+        {#each TONES as t}
+          <option value={t.id} title={t.hint}>{t.label}</option>
         {/each}
       </select>
     </label>
