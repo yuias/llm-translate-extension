@@ -13,12 +13,38 @@ Svelte 5 + TypeScript.
   layout. Toggle back to the original instantly.
 - **Bring your own model** — add/remove multiple OpenAI-compatible providers
   (endpoint, model, API key, display name) and switch the active one. An
-  optional extra JSON request body per provider passes vendor-specific options,
-  e.g. `{"reasoning_effort":"low"}` to make reasoning models answer faster.
+  optional extra JSON request body per provider passes vendor-specific options;
+  see [Reasoning models](#reasoning-models).
 - **Tone** — keep the original register, or rewrite it as polite, business,
   casual, an X post, or plain language.
 - **Languages** — translate into any of the G7 languages plus Chinese and
   Russian. Source language is auto-detected.
+
+## Reasoning models
+
+Reasoning ("thinking") models spend time reasoning before they emit any
+translated text, which can take minutes. The selection popup shows
+"Thinking…" during that phase. To shorten it, put the provider's own reasoning
+option in the provider's **Extra request body (JSON)** field. The field name
+differs per API:
+
+| API | Disable reasoning | Reduce reasoning |
+| --- | --- | --- |
+| OpenAI | — | `{"reasoning_effort":"low"}` |
+| OpenRouter | `{"reasoning":{"enabled":false}}` | `{"reasoning":{"effort":"low"}}` or `{"reasoning":{"max_tokens":512}}` |
+| Zhipu GLM (direct) | `{"thinking":{"type":"disabled"}}` | — |
+
+Notes:
+
+- Some models cannot turn reasoning off. OpenRouter then answers
+  `400 Reasoning is mandatory for this endpoint and cannot be disabled`; use a
+  reduce option instead, or a non-reasoning model for translation.
+- OpenRouter can attach server tools (such as `openrouter:datetime`) from
+  account or preset settings even though this extension never sends `tools`.
+  If a request fails with `Server tool "openrouter:…" failed`, turn those tools
+  off for the key or preset you use here.
+- Use **Test connection** in the provider form to check a body before saving.
+  An unrecognized field is either ignored (no speed-up) or rejected with 400.
 
 ## Privacy & permissions
 
