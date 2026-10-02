@@ -8,6 +8,8 @@ export interface Provider {
   endpoint: string;
   model: string;
   apiKey: string;
+  /** Raw JSON object text merged into every request body, e.g. {"reasoning_effort":"low"}. */
+  extraBody?: string;
 }
 
 export interface PopupSize {

@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import { requestEndpointPermission } from '../permissions';
   import { DEFAULT_TONE } from '../tones';
-  import { translateText } from '../translator';
+  import { parseExtraBody, translateText } from '../translator';
   import type { Provider } from '../types';
 
   interface Props {
@@ -19,10 +19,12 @@
   type TestState = { kind: 'idle' | 'testing' | 'ok' | 'error'; message?: string };
   let test = $state<TestState>({ kind: 'idle' });
 
+  const extraBodyCheck = $derived(parseExtraBody(draft.extraBody));
   const canSave = $derived(
     draft.displayName.trim() !== '' &&
       draft.endpoint.trim() !== '' &&
-      draft.model.trim() !== '',
+      draft.model.trim() !== '' &&
+      extraBodyCheck.ok,
   );
 
   async function runTest() {
@@ -44,7 +46,14 @@
     if (!canSave) return;
     // Proactively request endpoint permission so translation works later.
     await requestEndpointPermission(draft.endpoint);
-    onsave({ ...draft, displayName: draft.displayName.trim(), endpoint: draft.endpoint.trim() });
+    const { extraBody, ...rest } = draft;
+    onsave({
+      ...rest,
+      displayName: draft.displayName.trim(),
+      endpoint: draft.endpoint.trim(),
+      // Drop an empty value so providers without extras keep their stored shape.
+      ...(extraBody?.trim() ? { extraBody: extraBody.trim() } : {}),
+    });
   }
 </script>
 
@@ -65,6 +74,22 @@
     <label class="full">
       <span>API key</span>
       <input type="password" bind:value={draft.apiKey} placeholder="sk-…" autocomplete="off" />
+    </label>
+    <label class="full">
+      <span>Extra request body (JSON, optional)</span>
+      <textarea
+        bind:value={draft.extraBody}
+        rows="3"
+        spellcheck="false"
+        placeholder={'{"thinking":{"type":"disabled"}}'}
+      ></textarea>
+      {#if !extraBodyCheck.ok}
+        <small class="invalid">✗ {extraBodyCheck.error}</small>
+      {:else}
+        <small>
+          Merged into each request. GLM: {'{"thinking":{"type":"disabled"}}'} · OpenAI: {'{"reasoning_effort":"low"}'}
+        </small>
+      {/if}
     </label>
   </div>
 
@@ -111,7 +136,8 @@
   label.full {
     grid-column: 1 / -1;
   }
-  input {
+  input,
+  textarea {
     background: var(--surface-2);
     color: var(--text);
     border: 1px solid var(--border);
@@ -119,7 +145,20 @@
     padding: 9px 11px;
     font-size: 14px;
   }
-  input:focus {
+  textarea {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    resize: vertical;
+  }
+  small {
+    font-size: 11px;
+    word-break: break-word;
+  }
+  small.invalid {
+    color: var(--danger);
+  }
+  input:focus,
+  textarea:focus {
     outline: none;
     border-color: var(--accent);
   }

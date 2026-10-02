@@ -129,6 +129,25 @@ function resolveEndpoint(endpoint: string): string {
   return /\/chat\/completions$/.test(trimmed) ? trimmed : `${trimmed}/chat/completions`;
 }
 
+export type ExtraBodyResult =
+  | { ok: true; value: Record<string, unknown> | null }
+  | { ok: false; error: string };
+
+/** Parse the provider's extra request body; empty text means none. */
+export function parseExtraBody(text: string | undefined): ExtraBodyResult {
+  if (!text || text.trim() === '') return { ok: true, value: null };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Invalid JSON' };
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, error: 'Must be a JSON object, e.g. {"key": "value"}' };
+  }
+  return { ok: true, value: parsed as Record<string, unknown> };
+}
+
 /** On success the caller owns `timer` and must dispose it. */
 async function postChat(
   provider: Provider,
@@ -137,6 +156,10 @@ async function postChat(
   stream: boolean,
 ): Promise<{ res: Response; timer: RequestTimer }> {
   const url = resolveEndpoint(provider.endpoint);
+  const extra = parseExtraBody(provider.extraBody);
+  if (!extra.ok) {
+    throw new TranslationError(`Invalid extra request body for this provider: ${extra.error}`);
+  }
   const timer: RequestTimer = new RequestTimer(signal);
   try {
     // Retry transient failures (rate limits, upstream 5xx) with backoff.
@@ -150,7 +173,14 @@ async function postChat(
             'Content-Type': 'application/json',
             Authorization: `Bearer ${provider.apiKey}`,
           },
-          body: JSON.stringify({ model: provider.model, messages, stream, temperature: 0.2 }),
+          // Extra fields may override defaults like temperature, but not the core fields.
+          body: JSON.stringify({
+            temperature: 0.2,
+            ...extra.value,
+            model: provider.model,
+            messages,
+            stream,
+          }),
           signal: timer.signal,
         });
       } catch (e) {
