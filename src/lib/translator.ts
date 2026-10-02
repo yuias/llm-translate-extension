@@ -148,6 +148,18 @@ export function parseExtraBody(text: string | undefined): ExtraBodyResult {
   return { ok: true, value: parsed as Record<string, unknown> };
 }
 
+/**
+ * Keep the whole error body: gateways like OpenRouter nest the real cause in
+ * `metadata`, past any sensible cut-off. JSON is indented to stay readable.
+ */
+function formatErrorBody(body: string): string {
+  try {
+    return JSON.stringify(JSON.parse(body), null, 2);
+  } catch {
+    return body.trim();
+  }
+}
+
 /** On success the caller owns `timer` and must dispose it. */
 async function postChat(
   provider: Provider,
@@ -203,7 +215,7 @@ async function postChat(
       const body = await res.text().catch(() => '');
       timer.disarm();
       throw new TranslationError(
-        `LLM request failed (${res.status}): ${body.slice(0, 200)}`,
+        `LLM request failed (${res.status}): ${formatErrorBody(body)}`,
         res.status,
       );
     }

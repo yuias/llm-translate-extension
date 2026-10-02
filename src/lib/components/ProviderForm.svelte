@@ -174,6 +174,8 @@
     margin: 0;
     font-size: 13px;
     word-break: break-word;
+    /* Error bodies arrive as indented JSON. */
+    white-space: pre-wrap;
   }
   .test.ok {
     color: #4ade80;
