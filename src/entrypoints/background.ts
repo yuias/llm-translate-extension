@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import { TRANSLATE_PORT, type StreamMessage, type StreamRequest } from '../lib/messaging';
 import { getActiveProvider, getSettings } from '../lib/storage';
-import { translateSegmentsStream, translateText, translateTextStream } from '../lib/translator';
+import { translateSegmentsStream, translateTextStream } from '../lib/translator';
 
 // Must stay well under Chrome's 30 s service-worker idle timeout.
 const HEARTBEAT_MS = 20_000;
@@ -60,14 +60,21 @@ export default defineBackground(() => {
               if (controller.signal.aborted) return;
               if (seen.has(i) || !msg.segments[i]!.trim()) continue;
               try {
-                const text = await translateText(
+                // Streaming returns headers immediately, so a reasoning model's
+                // thinking time doesn't count toward Chrome's fetch-response limit.
+                let text = '';
+                for await (const d of translateTextStream(
                   provider,
                   msg.segments[i]!,
                   msg.targetLang,
                   tone,
                   controller.signal,
-                );
-                send({ type: 'segment', index: i, text });
+                )) {
+                  if (d.kind === 'content') text += d.text;
+                }
+                // An empty result (e.g. the stream ended after reasoning only)
+                // would blank the node; leave the original text instead.
+                if (text.trim()) send({ type: 'segment', index: i, text: text.trim() });
               } catch {
                 if (controller.signal.aborted) return;
                 // Leave just this segment untranslated rather than failing the batch.
